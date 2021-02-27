@@ -7,62 +7,74 @@ mod timeline;
 
 pub use self::image::Image;
 pub use position::Position;
-
 pub use timeline::*;
 
-use std::time::{Instant, Duration};
-use crate::{ValueProvider, BaseSigned, BaseUnsigned, Graphics, Context};
+use std::time::Duration;
+use crate::Context;
 use cgmath::Vector2;
 use serde_derive::*;
 use serde_traitobject::{Serialize, Deserialize};
-use serde::de::DeserializeOwned;
 use dyn_clone::DynClone;
 use std::fmt::Debug;
-use std::ops::Deref;
+use std::cmp::Ordering;
+use sfml::graphics::RenderTarget;
 
 pub trait Element: DynClone + Debug + Serialize + Deserialize + 'static {
 	fn get_size(&self, context: &Context) -> (Vector2<u32>, FrameLength);
 
-	fn draw(&self, context: &Context, graphics: &mut Graphics) -> FrameLength; // next update time
+	fn draw(&self, context: &Context, graphics: &mut dyn RenderTarget) -> FrameLength; // next update time
 }
 
 dyn_clone::clone_trait_object!(Element);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DynElement {
-	#[serde(with = "serde_traitobject")]
-	inner: Box<dyn Element>
-}
+pub type DynElement = Box<dyn Element>;
 
-impl DynElement {
-	pub fn new(inner: impl Element) -> Self {
-		Self {
-			inner: Box::new(inner)
-		}
-	}
-}
-
-impl Deref for DynElement {
-	type Target = dyn Element;
-
-	fn deref(&self) -> &Self::Target {
-		self.inner.deref()
-	}
-}
-
-impl Element for DynElement {
-	fn get_size(&self, context: &Context) -> (Vector2<u32>, FrameLength) {
-		(*self).get_size(context)
-	}
-
-	fn draw(&self, context: &Context, graphics: &mut Graphics) -> FrameLength {
-		(*self).draw(context, graphics)
-	}
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum FrameLength {
 	Consistent,
 	Forever,
-	Limited(Duration)
+	Limited(Duration),
+	End
+}
+
+impl PartialOrd for FrameLength {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		if self == other {
+			return if *self == Self::End {
+				None
+			} else {
+				Some(Ordering::Equal)
+			};
+		}
+		Some(match self {
+			Self::Consistent => Ordering::Less,
+			Self::Forever => Ordering::Greater,
+			Self::Limited(duration) => match other {
+				Self::Consistent => Ordering::Greater,
+				Self::Forever => Ordering::Less,
+				Self::Limited(other_duration) => return duration.partial_cmp(other_duration),
+				Self::End => Ordering::Greater
+			},
+			Self::End => Ordering::Less
+		})
+	}
+}
+
+impl Ord for FrameLength {
+	fn cmp(&self, other: &Self) -> Ordering {
+		if self == other {
+			return Ordering::Equal
+		}
+		match self {
+			Self::Consistent => Ordering::Less,
+			Self::Forever => Ordering::Greater,
+			Self::Limited(duration) => match other {
+				Self::Consistent => Ordering::Greater,
+				Self::Forever => Ordering::Less,
+				Self::Limited(other_duration) => duration.cmp(other_duration),
+				Self::End => Ordering::Greater
+			},
+			Self::End => Ordering::Less
+		}
+	}
 }

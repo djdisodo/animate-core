@@ -9,8 +9,6 @@ edition = "2018"
 [dependencies]
 cgmath = { version = "0.18", features = ["serde"] }
 hlua = "0.3"
-piston2d-graphics = "0.39"
-piston2d-opengl_graphics = "0.77"
 num-traits = "0.2"
 image = "0.23"
 serde_derive = "1.0"
@@ -19,10 +17,7 @@ rangemap = "0.1"
 dyn-clone = "1.0"
 serde_traitobject = "0.2"
 derivative = "2.2"
-
-[dev-dependencies]
-graphics_buffer = "0.7"
-piston_window = "0.117.0"
+sfml = "0.15.1"
 
 [[test]]
 name = "test"

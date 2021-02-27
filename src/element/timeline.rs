@@ -2,9 +2,10 @@ use std::time::Duration;
 use std::ops::Range;
 use crate::element::{Element, FrameLength, DynElement};
 use serde_derive::*;
-use crate::{Context, Graphics};
+use crate::Context;
 use cgmath::Vector2;
 use std::cmp::min;
+use sfml::graphics::RenderTarget;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Timeline {
@@ -15,6 +16,7 @@ pub struct Timeline {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineElement {
 	pub start: Duration,
+	#[serde(with = "serde_traitobject")]
 	pub inner: DynElement
 }
 
@@ -22,7 +24,7 @@ impl TimelineElement {
 	pub fn new(element: impl Element) -> Self {
 		Self {
 			start: Duration::default(),
-			inner: DynElement::new(element)
+			inner: Box::new(element)
 		}
 	}
 }
@@ -47,13 +49,14 @@ impl Timeline {
 				self.elements.push((range.start..to.start, timeline_element));
 			}
 		}
+		self.elements.push((to, element));
 	}
 
-	pub fn push(&mut self, element: TimelineElement, to: Range<Duration>) {
+	pub fn push(&mut self, _element: TimelineElement, _to: Range<Duration>) {
 		//TODO
 	}
 
-	pub fn shift_and_insert(&mut self, element: TimelineElement, to: Range<Duration>) {
+	pub fn shift_and_insert(&mut self, _element: TimelineElement, _to: Range<Duration>) {
 		//TODO
 	}
 
@@ -61,7 +64,7 @@ impl Timeline {
 		&self.elements
 	}
 
-	fn get_context_and_element(&self, context: &Context) -> SeekResult {
+	fn seek(&self, context: &Context) -> SeekResult {
 		for (range, timeline_element) in &self.elements {
 			if range.contains(&context.duration_offset) {
 				let mut new_context = context.clone();
@@ -96,7 +99,7 @@ enum SeekResult<'a> {
 
 impl Element for Timeline {
 	fn get_size(&self, context: &Context) -> (Vector2<u32>, FrameLength) {
-		match self.get_context_and_element(context) {
+		match self.seek(context) {
 			SeekResult::Element {
 				context: new_context,
 				element: (range, element)
@@ -111,37 +114,39 @@ impl Element for Timeline {
 					},
 					FrameLength::Limited(length) => {
 						(size, FrameLength::Limited(min(range.end - context.duration_offset, length)))
+					},
+					FrameLength::End => {
+						(size, FrameLength::Limited(range.end - context.duration_offset))
 					}
 				}
 			},
-			SeekResult::Empty { next_element } => if let Some((range, next_element)) = next_element {
+			SeekResult::Empty { next_element } => if let Some((range, _)) = next_element {
 				(Vector2::new(0, 0), FrameLength::Limited(range.start - context.duration_offset))
 			} else {
-				(Vector2::new(0, 0), FrameLength::Forever)
+				(Vector2::new(0, 0), FrameLength::End)
 			}
 		}
 	}
 
-	fn draw(&self, context: &Context, graphics: &mut Graphics) -> FrameLength {
-		match self.get_context_and_element(context) {
+	fn draw(&self, context: &Context, graphics: &mut dyn RenderTarget) -> FrameLength {
+		match self.seek(context) {
 			SeekResult::Element {
 				context: new_context,
 				element: (range, element)
-			} => {
-				match element.draw(&new_context, graphics) {
-					FrameLength::Forever => {
-						FrameLength::Limited(range.end - context.duration_offset)
-					},
-					FrameLength::Consistent => FrameLength::Consistent,
-					FrameLength::Limited(length) => {
-						FrameLength::Limited(min(range.end - context.duration_offset, length))
-					}
-				}
+			} => match element.draw(&new_context, graphics) {
+				FrameLength::Forever => {
+					FrameLength::Limited(range.end - context.duration_offset)
+				},
+				FrameLength::Consistent => FrameLength::Consistent,
+				FrameLength::Limited(length) => {
+					FrameLength::Limited(min(range.end - context.duration_offset, length))
+				},
+				FrameLength::End => FrameLength::Limited(range.end - context.duration_offset)
 			},
-			SeekResult::Empty { next_element } => if let Some((range, next_element)) = next_element {
+			SeekResult::Empty { next_element } => if let Some((range, _)) = next_element {
 				FrameLength::Limited(range.start - context.duration_offset)
 			} else {
-				FrameLength::Forever
+				FrameLength::End
 			}
 		}
 	}

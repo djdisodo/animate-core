@@ -1,29 +1,26 @@
-#![feature(once_cell)]
+#![feature(once_cell, type_ascription)]
 
-mod element;
+pub mod element;
 
-use std::any::Any;
 use std::time::Duration;
-use cgmath::num_traits::Num;
-use opengl_graphics::GlGraphics;
-use graphics::math::Matrix2d;
 use dyn_clone::DynClone;
 use std::fmt::Debug;
 use serde_traitobject::*;
 use serde_derive::*;
-
-pub type Graphics = GlGraphics;
+use crate::element::FrameLength;
+use sfml::graphics::RenderStates;
 
 pub type BaseSigned = i32;
 pub type BaseUnsigned = u32;
 
-pub trait ValueProvider<T = BaseSigned>: DynClone + Debug + Serialize + Deserialize + 'static{
-    fn get(&self, context: &Context) -> T;
+pub trait ValueProvider<T = BaseSigned>: DynClone + Debug + Serialize + Deserialize + 'static {
+    fn get(&self, context: &Context) -> (T, FrameLength);
 }
+dyn_clone::clone_trait_object!(<T> ValueProvider<T>);
 
 impl<T: Copy + DynClone + Debug + Serialize + Deserialize + 'static> ValueProvider<T> for T {
-    fn get(&self, context: &Context) -> T{
-        *self
+    fn get(&self, _: &Context) -> (T, FrameLength) {
+        (*self, FrameLength::Forever)
     }
 }
 
@@ -36,7 +33,7 @@ pub struct LuaScript {
 pub struct Context {
     duration_from_start: Duration,
     duration_offset: Duration,
-    transform: Matrix2d
+    render_states: RenderStates<'static, 'static, 'static>
 }
 
 #[cfg(test)]
@@ -46,42 +43,75 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use piston_window::{WindowSettings, PistonWindow, EventSettings, Events, RenderEvent, UpdateEvent};
-    use graphics_buffer::RenderBuffer;
-    use opengl_graphics::OpenGL;
-    use crate::{Graphics, Context};
-    use crate::element::{Image, Element};
-    use std::path::Path;
-    use graphics::Transformed;
+    use crate:: Context;
+    use crate::element::{Image, Element, Position, Timeline, TimelineElement, FrameLength};
+    use cgmath::Vector2;
+    use std::thread::sleep;
+    use std::time::{Duration, Instant};
+    use sfml::graphics::{RenderTexture, RenderWindow, RenderStates, RenderTarget, Sprite, Color};
+    use sfml::window::{Style, ContextSettings, Event};
 
     pub fn main() {
-        let opengl = OpenGL::V3_2;
+        let mut render_texture = RenderTexture::new(1280, 720, false).unwrap();
+        let mut render_window = RenderWindow::new((1280, 720), "hello", Style::CLOSE, &ContextSettings::default());
 
-        // Create an Glutin window.
-        let mut window: PistonWindow = WindowSettings::new("gl test", [500, 500])
-            .graphics_api(opengl)
-            .exit_on_esc(true)
-            .build()
-            .unwrap();
+        render_window.set_framerate_limit(60);
+        render_window.set_active(true);
+        let target = {
+            let mut timeline = Timeline::default();
+            let image = Image::new("test.png".to_owned());
+            let position = Position {
+                inner: Box::new(image.clone()),
+                position: Box::new(Vector2::new(100, 100))
+            };
+            timeline.append(
+                TimelineElement::new(position),
+                Duration::from_secs(0)..Duration::from_secs(1)
+            );
+            timeline.append(
+                TimelineElement::new(image),
+                Duration::from_secs(1)..Duration::from_secs(2)
+            );
+            timeline
+        };
 
-        let mut graphics = Graphics::new(opengl);
-
-        let image = Image::new("test.png".to_owned());
-
-
-        let mut events = Events::new(EventSettings::new());
-        while let Some(e) = events.next(&mut window) {
-            if let Some(args) = e.render_args() {
-                graphics.draw(args.viewport(), | c, gl | {
-                    let mut context = Context {
-                        duration_from_start: Default::default(),
-                        duration_offset: Default::default(),
-                        transform: c.transform
-                    };
-                    let size = image.get_size(&context);
-
-                    image.draw(&context, gl)
-                });
+        while render_window.is_open() {
+            let start = Instant::now();
+            loop {
+                let elapsed = Instant::now() - start;
+                while let Some(event) = render_window.poll_event() {
+                    if event == Event::Closed {
+                        render_window.close();
+                    }
+                }
+                let context = Context {
+                    duration_from_start: elapsed.clone(),
+                    duration_offset: elapsed,
+                    render_states: RenderStates::default()
+                };
+                let frame_length = target.draw(&context, &mut render_texture);
+                render_texture.display();
+                {
+                    render_window.clear(Color::TRANSPARENT);
+                    let sprite = Sprite::with_texture(render_texture.texture());
+                    render_window.draw(&sprite);
+                    render_window.display();
+                }
+                match frame_length {
+                    FrameLength::Consistent => {
+                        sleep(Duration::new(1, 0) / 60);
+                    },
+                    FrameLength::Forever => {
+                        sleep(Duration::new(60, 0))
+                    },
+                    FrameLength::Limited(duration) => {
+                        sleep(duration)
+                    },
+                    FrameLength::End => {
+                        break; //loop
+                    }
+                };
+                render_texture.clear(Color::TRANSPARENT);
             }
         }
     }
